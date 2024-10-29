@@ -1,3 +1,4 @@
+# main.py
 import sys
 import os
 from PySide6.QtWidgets import QApplication
@@ -7,6 +8,7 @@ from ui.student_dashboard import StudentDashboard
 from ui.instructor_dashboard import InstructorDashboard
 from ui.advisor_dashboard import AdvisorDashboard
 from ui.staff_dashboard import StaffDashboard
+
 
 class AcademicManagementSystem:
     def __init__(self):
@@ -20,7 +22,7 @@ class AcademicManagementSystem:
         self.login_screen.resize(default_size)
 
     def show_dashboard(self, user_id, role):
-        print(f"Showing dashboard for user_id: {user_id}, role: {role}")  # Debug print
+        print(f"Showing dashboard for user_id: {user_id}, role: {role}")
         if role == 'student':
             self.dashboard = StudentDashboard(user_id)
         elif role == 'instructor':
@@ -48,9 +50,13 @@ class AcademicManagementSystem:
         self.login_screen.show()
         return self.app.exec()
 
+
 if __name__ == "__main__":
-    # Change the current working directory to the script's directory
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    # Add the project root directory to Python path
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, project_root)
+
+    print(f"Python path: {sys.path}")  # Debug print
     print(f"Current working directory: {os.getcwd()}")  # Debug print
 
     ams = AcademicManagementSystem()
