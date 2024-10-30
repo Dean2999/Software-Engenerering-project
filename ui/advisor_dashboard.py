@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                                QTabWidget, QComboBox, QMessageBox, QLineEdit)
 from PySide6.QtCore import Qt, Signal
 import sqlite3
+from ui.common.what_if_analysis import AdvisorWhatIfAnalysis
 
 
 class AdvisorDashboard(QMainWindow):
@@ -94,21 +95,8 @@ class AdvisorDashboard(QMainWindow):
         # What-If Analysis Tab
         what_if_tab = QWidget()
         what_if_layout = QVBoxLayout(what_if_tab)
-        self.what_if_student_selector = QComboBox()
-        what_if_layout.addWidget(QLabel("Select Student:"))
-        what_if_layout.addWidget(self.what_if_student_selector)
-        self.scenario_selector = QComboBox()
-        self.scenario_selector.addItems(["GPA Impact", "GPA Goal"])
-        what_if_layout.addWidget(QLabel("Select Scenario:"))
-        what_if_layout.addWidget(self.scenario_selector)
-        self.input_field = QLineEdit()
-        what_if_layout.addWidget(QLabel("Input:"))
-        what_if_layout.addWidget(self.input_field)
-        self.analyze_button = QPushButton("Perform What-If Analysis")
-        self.analyze_button.clicked.connect(self.perform_what_if_analysis)
-        what_if_layout.addWidget(self.analyze_button)
-        self.analysis_result = QLabel()
-        what_if_layout.addWidget(self.analysis_result)
+        what_if_analysis = AdvisorWhatIfAnalysis(self.advisor_id)
+        what_if_layout.addWidget(what_if_analysis)
         tab_widget.addTab(what_if_tab, "What-If Analysis")
 
         self.load_advisor_data()
