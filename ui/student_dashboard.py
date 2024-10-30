@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, Q
 from PySide6.QtCore import Qt, Signal
 import sqlite3
 from datetime import datetime
+from ui.common.what_if_analysis import StudentWhatIfAnalysis
 
 
 class StudentDashboard(QMainWindow):
@@ -130,8 +131,8 @@ class StudentDashboard(QMainWindow):
         # What-If Analysis Tab
         what_if_tab = QWidget()
         what_if_layout = QVBoxLayout(what_if_tab)
-        what_if_label = QLabel("What-If Analysis")
-        what_if_layout.addWidget(what_if_label)
+        what_if_analysis = StudentWhatIfAnalysis(self.student_id)
+        what_if_layout.addWidget(what_if_analysis)
         tab_widget.addTab(what_if_tab, "What-If Analysis")
 
         self.load_student_data()
