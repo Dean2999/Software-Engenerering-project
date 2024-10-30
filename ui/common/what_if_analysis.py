@@ -59,6 +59,7 @@ class WhatIfAnalysisBase(QWidget):
 
         # Target GPA Input Section
         self.target_group = QGroupBox("Target GPA")
+        self.target_group.setMaximumHeight(350)
         target_layout = QVBoxLayout()
         self.target_gpa_input = QDoubleSpinBox()
         self.target_gpa_input.setRange(0, 4.0)
