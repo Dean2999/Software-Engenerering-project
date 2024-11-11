@@ -1,6 +1,6 @@
-# main.py
 import sys
 import os
+from PySide6.QtWidgets import QMessageBox
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QSize
 from ui.login_screen import LoginScreen
@@ -8,6 +8,7 @@ from ui.student_dashboard import StudentDashboard
 from ui.instructor_dashboard import InstructorDashboard
 from ui.advisor_dashboard import AdvisorDashboard
 from ui.staff_dashboard import StaffDashboard
+from ui.admin_dashboard import AdminDashboard
 
 
 class AcademicManagementSystem:
@@ -31,6 +32,8 @@ class AcademicManagementSystem:
             self.dashboard = AdvisorDashboard(user_id)
         elif role == 'staff':
             self.dashboard = StaffDashboard(user_id)
+        elif role == 'admin':
+            self.dashboard = AdminDashboard(user_id)
         else:
             print(f"Unknown role: {role}")
             return

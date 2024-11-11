@@ -14,22 +14,13 @@ class StudentDashboard(QMainWindow):
     def __init__(self, student_id):
         super().__init__()
         self.student_id = student_id
-        print(f"Initializing StudentDashboard with student_id: {self.student_id}")
+        self.user_id = self.get_user_id()  # Get the user_id when initializing
+        print(f"Initializing StudentDashboard with student_id: {self.student_id}, user_id: {self.user_id}")
         self.setWindowTitle("Student Dashboard")
         self.setGeometry(100, 100, 800, 600)
         self.setup_ui()
+        self.log_operation("login", "Student logged into dashboard")
 
-    def get_current_semester(self):
-        current_date = datetime.now()
-        month = current_date.month
-        day = current_date.day
-
-        if 1 <= month <= 5 and day <= 15:
-            return 'Spring', current_date.year
-        elif (month == 5 and day > 15) or (month <= 8 and (month != 8 or day <= 15)):
-            return 'Summer', current_date.year
-        else:
-            return 'Fall', current_date.year
 
     def setup_ui(self):
         central_widget = QWidget()
@@ -70,47 +61,38 @@ class StudentDashboard(QMainWindow):
         # Current Courses Tab
         courses_tab = QWidget()
         courses_layout = QVBoxLayout(courses_tab)
-        courses_layout.setContentsMargins(10, 10, 10, 10)  # Add some padding around the edges
+        courses_layout.setContentsMargins(10, 10, 10, 10)
 
-        # Add semester info label with left alignment
         current_semester, current_year = self.get_current_semester()
         self.semester_label = QLabel(f"Current Semester: {current_semester} {current_year}")
         self.semester_label.setStyleSheet("font-size: 14px; font-weight: bold;")
-        self.semester_label.setAlignment(Qt.AlignLeft)  # Align to the left
+        self.semester_label.setAlignment(Qt.AlignLeft)
         courses_layout.addWidget(self.semester_label)
 
-        # Add some vertical spacing
         spacer = QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Fixed)
         courses_layout.addItem(spacer)
 
-        # Add no courses message with white text and proper spacing
         self.no_courses_label = QLabel("Student Currently Not Enrolled in classes for this term")
         self.no_courses_label.setStyleSheet("font-size: 14px; color: white; margin: 10px 0;")
-        self.no_courses_label.setAlignment(Qt.AlignTop | Qt.AlignCenter)  # Center alignment
+        self.no_courses_label.setAlignment(Qt.AlignTop | Qt.AlignCenter)
         self.no_courses_label.hide()
         courses_layout.addWidget(self.no_courses_label)
 
-        # Add some vertical spacing
         spacer = QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Fixed)
         courses_layout.addItem(spacer)
 
-        # Add courses table
         self.courses_table = QTableWidget()
         courses_layout.addWidget(self.courses_table)
 
         tab_widget.addTab(courses_tab, "Courses")
 
-        # Add some vertical spacing
         spacer = QSpacerItem(20, 400, QSizePolicy.Minimum, QSizePolicy.Fixed)
         courses_layout.addItem(spacer)
-
-        # In setup_ui method:
 
         # GPA Tab
         gpa_tab = QWidget()
         gpa_layout = QVBoxLayout(gpa_tab)
 
-        # Header section
         header_layout = QHBoxLayout()
         self.gpa_label = QLabel()
         self.gpa_label.setStyleSheet("font-size: 14px; font-weight: bold;")
@@ -118,11 +100,9 @@ class StudentDashboard(QMainWindow):
         header_layout.addStretch()
         gpa_layout.addLayout(header_layout)
 
-        # Add some vertical spacing
         spacer = QSpacerItem(20, 20, QSizePolicy.Minimum, QSizePolicy.Fixed)
         gpa_layout.addItem(spacer)
 
-        # Transcript table
         self.transcript_table = QTableWidget()
         gpa_layout.addWidget(self.transcript_table)
 
@@ -137,13 +117,70 @@ class StudentDashboard(QMainWindow):
 
         self.load_student_data()
 
+    def get_user_id(self):
+        """Get the user_id from the users table based on the student_id"""
+        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'academic_management.db')
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT u.id 
+                FROM users u 
+                JOIN students s ON u.username = s.student_id 
+                WHERE s.student_id = ?
+            """, (self.student_id,))
+            result = cursor.fetchone()
+            return str(result[0]) if result else None
+        except sqlite3.Error as e:
+            print(f"Database error while getting user_id: {e}")
+            return None
+        finally:
+            if conn:
+                conn.close()
+
+    def log_operation(self, operation_type, details):
+        if not self.user_id:
+            print("Error: No user_id available for logging")
+            return
+
+        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'academic_management.db')
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute("""
+                INSERT INTO operation_logs (timestamp, user_id, operation_type, details)
+                VALUES (?, ?, ?, ?)
+            """, (timestamp, self.user_id, f"student_{operation_type}", details))
+            conn.commit()
+        except sqlite3.Error as e:
+            print(f"Database error while logging operation: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+    def get_current_semester(self):
+        current_date = datetime.now()
+        month = current_date.month
+        day = current_date.day
+
+        if 1 <= month <= 5 and day <= 15:
+            return 'Spring', current_date.year
+        elif (month == 5 and day > 15) or (month <= 8 and (month != 8 or day <= 15)):
+            return 'Summer', current_date.year
+        else:
+            return 'Fall', current_date.year
+
+
     def load_transcript_data(self):
         db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'academic_management.db')
         try:
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
 
-            # Get all semesters for this student, ordered by oldest first
+            # Log the transcript view
+            self.log_operation("view", "Viewed transcript data")
+
             cursor.execute("""
                 SELECT DISTINCT semester, year_taken
                 FROM student_courses
@@ -158,13 +195,11 @@ class StudentDashboard(QMainWindow):
 
             semesters = cursor.fetchall()
 
-            # First, calculate all GPAs chronologically
             semester_data = []
             cumulative_points = 0
             cumulative_credits = 0
 
             for semester, year in semesters:
-                # Get courses for this semester
                 cursor.execute("""
                     SELECT c.course_prefix, c.course_number, c.credits, sc.grade
                     FROM student_courses sc
@@ -176,7 +211,6 @@ class StudentDashboard(QMainWindow):
 
                 courses = cursor.fetchall()
 
-                # Calculate semester GPA
                 semester_points = 0
                 semester_credits = 0
                 semester_courses = []
@@ -214,18 +248,13 @@ class StudentDashboard(QMainWindow):
                     'cumulative_gpa': cumulative_gpa
                 })
 
-            # Now reverse the order for display (newest first)
             semester_data.reverse()
 
-            # Set up the table
             all_rows = []
 
             for sem_data in semester_data:
-                # Add semester header
-
                 all_rows.append([f"{sem_data['term']} {sem_data['year']}", '', '', '', ''])
 
-                # Add courses
                 for course in sem_data['courses']:
                     all_rows.append([
                         f"{course['prefix']} {course['number']}",
@@ -235,17 +264,14 @@ class StudentDashboard(QMainWindow):
                         ''
                     ])
 
-                # Add semester summary
-                all_rows.append(['', '', '', '', ''])  # Empty row for spacing
+                all_rows.append(['', '', '', '', ''])
                 all_rows.append(['Semester Credits:', str(sem_data['semester_credits']), '', '', ''])
                 all_rows.append(['Semester GPA:', f"{sem_data['semester_gpa']:.2f}", '', '', ''])
                 all_rows.append(['Cumulative GPA:', f"{sem_data['cumulative_gpa']:.2f}", '', '', ''])
-                all_rows.append(['', '', '', '', ''])  # Empty row for spacing
+                all_rows.append(['', '', '', '', ''])
 
-            # Set up and populate the table
             self.transcript_table.setColumnCount(3)
-            self.transcript_table.setHorizontalHeaderLabels(
-                ["Course", "Credits", "Grade"])
+            self.transcript_table.setHorizontalHeaderLabels(["Course", "Credits", "Grade"])
             self.transcript_table.setRowCount(len(all_rows))
 
             for row_idx, row_data in enumerate(all_rows):
@@ -255,26 +281,11 @@ class StudentDashboard(QMainWindow):
                         font = item.font()
                         font.setBold(True)
                         item.setFont(font)
-                    self.transcript_table.setItem(row_idx, col_idx, item)
-
-            # Adjust column widths
-            self.transcript_table.resizeColumnsToContents()
-
-            # When creating table items in the loop, add alignment for the Credits column
-            # When creating table items in the loop, add alignment for the Credits column
-            for row_idx, row_data in enumerate(all_rows):
-                for col_idx, value in enumerate(row_data):
-                    item = QTableWidgetItem(value)
-                    if any(sem['term'] in value and str(sem['year']) in value for sem in semester_data):
-                        font = item.font()
-                        font.setBold(True)
-                        item.setFont(font)
-
-                    # Center align the Credits column (column index 1)
-                    if col_idx == 1 or col_idx == 2 and value.strip():  # If it's the credits column and not empty
+                    if col_idx == 1 or col_idx == 2 and value.strip():
                         item.setTextAlignment(Qt.AlignCenter)
-
                     self.transcript_table.setItem(row_idx, col_idx, item)
+
+            self.transcript_table.resizeColumnsToContents()
 
         except sqlite3.Error as e:
             print(f"Database error: {e}")
@@ -288,7 +299,9 @@ class StudentDashboard(QMainWindow):
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
 
-            # Load student info
+            # Log the data view
+            self.log_operation("view", "Viewed student data and current courses")
+
             cursor.execute("""
                 SELECT student_id, gender, major
                 FROM students
@@ -303,16 +316,14 @@ class StudentDashboard(QMainWindow):
                 for i, value in enumerate(student_info):
                     self.personal_info_table.setItem(0, i, QTableWidgetItem(str(value)))
 
-            # Get current semester info
             current_semester, current_year = self.get_current_semester()
 
-            # Load current semester courses
             cursor.execute("""
                 SELECT c.course_prefix, c.course_number, c.credits, sc.grade
                 FROM student_courses sc
                 JOIN courses c ON sc.course_prefix = c.course_prefix AND sc.course_number = c.course_number
                 WHERE sc.student_id = ? AND sc.semester = ? AND sc.year_taken = ?
-            """, (self.student_id, current_semester[0], current_year))  # Using first letter of semester
+            """, (self.student_id, current_semester[0], current_year))
 
             current_courses = cursor.fetchall()
 
@@ -326,7 +337,7 @@ class StudentDashboard(QMainWindow):
 
                 for row, course in enumerate(current_courses):
                     for col, value in enumerate(course):
-                        if col == 3:  # Grade column
+                        if col == 3:
                             grade = str(value) if value else "-"
                             self.courses_table.setItem(row, col, QTableWidgetItem(grade))
                         else:
@@ -335,7 +346,6 @@ class StudentDashboard(QMainWindow):
                 self.courses_table.hide()
                 self.no_courses_label.show()
 
-            # Calculate overall GPA (for the GPA tab)
             cursor.execute("""
                 SELECT c.credits, sc.grade
                 FROM student_courses sc
@@ -367,5 +377,12 @@ class StudentDashboard(QMainWindow):
                 conn.close()
 
     def logout(self):
+        """Handle student logout with logging"""
+        self.log_operation("logout", "Student logged out of the system")
         self.logout_signal.emit()
         self.close()
+
+    def closeEvent(self, event):
+        """Override closeEvent to log when student exits the system"""
+        self.log_operation("exit", "Student exited the system")
+        event.accept()
