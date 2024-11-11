@@ -4,13 +4,41 @@ from werkzeug.security import generate_password_hash
 # Database setup
 DB_NAME = 'academic_management.db'
 
-
 def create_connection():
     """Create and return a database connection."""
     return sqlite3.connect(DB_NAME)
 
-
 def create_tables(conn):
+    """Create necessary tables in the database if they don't exist."""
+    cursor = conn.cursor()
+
+    # Create users table with role_description column included from the start
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT CHECK (role IN ('student', 'instructor', 'advisor', 'staff', 'admin')) NOT NULL,
+        role_description TEXT
+    )
+    ''')
+
+    # Create operation_logs table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS operation_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp DATETIME NOT NULL,
+        user_id INTEGER NOT NULL,
+        operation_type TEXT NOT NULL,
+        details TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+    ''')
+
+    # Create index for faster querying of logs
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON operation_logs(timestamp)
+    ''')
     """Create necessary tables in the database if they don't exist."""
     cursor = conn.cursor()
 
@@ -20,7 +48,7 @@ def create_tables(conn):
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
-        role TEXT NOT NULL
+        role TEXT CHECK (role IN ('student', 'instructor', 'advisor', 'staff', 'admin')) NOT NULL
     )
     ''')
 
