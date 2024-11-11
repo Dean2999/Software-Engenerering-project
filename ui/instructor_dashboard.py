@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                                QTabWidget, QComboBox, QMessageBox)
 from PySide6.QtCore import Qt, Signal
 import sqlite3
+from .common.system_logger import SystemLogger, UserRole, OperationType
 
 class InstructorDashboard(QMainWindow):
     logout_signal = Signal()
@@ -17,6 +18,7 @@ class InstructorDashboard(QMainWindow):
         self.setWindowTitle("Instructor Dashboard")
         self.setGeometry(100, 100, 800, 600)
         self.setup_ui()
+        self.logger = SystemLogger(self.user_id, UserRole.INSTRUCTOR)
 
     def get_instructor_id(self):
         db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'academic_management.db')
