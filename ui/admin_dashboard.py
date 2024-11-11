@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel, QPushButton, QTableWidget, QTableWidgetItem,
                                QComboBox, QMessageBox, QDateEdit, QHeaderView)
 from PySide6.QtCore import Qt, Signal
+from ui.common.system_logger import SystemLogger, UserRole, OperationType
 
 
 class AdminDashboard(QMainWindow):
@@ -17,8 +18,12 @@ class AdminDashboard(QMainWindow):
         print(f"Initializing AdminDashboard with user_id: {self.user_id}")
         self.setWindowTitle("System Administrator Dashboard")
         self.setGeometry(100, 100, 800, 600)
+
+        # Initialize the universal logger
+        self.logger = SystemLogger(self.user_id, UserRole.ADMIN)
+
         self.setup_ui()
-        self.log_admin_activity("view", "Admin logged into dashboard")
+        self.logger.log_session(OperationType.LOGIN)
 
     def setup_ui(self):
         central_widget = QWidget()
@@ -106,19 +111,13 @@ class AdminDashboard(QMainWindow):
         self.load_logs()
         self.load_user_ids()
 
-    def closeEvent(self, event):
-        """Override closeEvent to log when admin exits the system"""
-        self.log_admin_activity("exit", "Admin exited the system")
-        event.accept()
-
     def load_logs(self):
-        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'academic_management.db')
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                '..', 'data', 'academic_management.db'))
             cursor = conn.cursor()
 
-            # Updated query to properly display roles from users table
-            query = """
+            cursor.execute("""
                 SELECT 
                     l.timestamp,
                     l.user_id,
@@ -132,8 +131,7 @@ class AdminDashboard(QMainWindow):
                 FROM operation_logs l
                 LEFT JOIN users u ON l.user_id = CAST(u.id AS TEXT)
                 ORDER BY l.timestamp DESC
-            """
-            cursor.execute(query)
+            """)
             logs = cursor.fetchall()
 
             self.logs_table.setRowCount(len(logs))
@@ -144,17 +142,20 @@ class AdminDashboard(QMainWindow):
                         item.setTextAlignment(Qt.AlignCenter)
                     self.logs_table.setItem(row, col, item)
 
+            # Log the view operation
+            self.logger.log_data_access("logs", "viewed all system logs")
+
         except sqlite3.Error as e:
-            print(f"Database error: {e}")
+            self.logger.log_operation(OperationType.ERROR, f"Failed to load logs: {str(e)}")
             QMessageBox.critical(self, "Error", "Failed to load logs from database.")
         finally:
             if conn:
                 conn.close()
 
     def load_user_ids(self):
-        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'academic_management.db')
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                '..', 'data', 'academic_management.db'))
             cursor = conn.cursor()
 
             cursor.execute("SELECT DISTINCT user_id FROM operation_logs ORDER BY user_id")
@@ -164,26 +165,7 @@ class AdminDashboard(QMainWindow):
             self.user_id_input.addItems([str(uid[0]) for uid in user_ids])
 
         except sqlite3.Error as e:
-            print(f"Database error: {e}")
-        finally:
-            if conn:
-                conn.close()
-
-    def log_admin_activity(self, operation_type, details):
-        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'academic_management.db')
-        try:
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            cursor.execute("""
-                INSERT INTO operation_logs (timestamp, user_id, operation_type, details)
-                VALUES (?, ?, ?, ?)
-            """, (timestamp, self.user_id, f"admin_{operation_type}", details))
-
-            conn.commit()
-        except sqlite3.Error as e:
-            print(f"Database error while logging admin activity: {e}")
+            self.logger.log_operation(OperationType.ERROR, f"Failed to load user IDs: {str(e)}")
         finally:
             if conn:
                 conn.close()
@@ -203,44 +185,107 @@ class AdminDashboard(QMainWindow):
 
     def filter_logs(self):
         filter_type = self.filter_type.currentText()
-        filter_details = ""
+        filter_criteria = {}
 
         if filter_type == "By Date":
             selected_date = self.date_picker.date().toPython()
-            filter_details = f"Filtered logs by date: {selected_date}"
+            filter_criteria["date"] = selected_date
         elif filter_type == "By User ID":
             user_id = self.user_id_input.currentText()
-            filter_details = f"Filtered logs by user ID: {user_id}"
-        elif filter_type == "All Operations":
-            # Show all rows when "All Operations" is selected
-            for row in range(self.logs_table.rowCount()):
-                self.logs_table.setRowHidden(row, False)
-            return
+            filter_criteria["user_id"] = user_id
+        elif filter_type != "All Operations":
+            operation = filter_type.split()[0].lower()
+            filter_criteria["operation"] = operation
 
-        self.log_admin_activity("filter", filter_details)
+        # Log the filter operation
+        self.logger.log_operation(
+            OperationType.FILTER,
+            f"Filtered logs by {filter_type}",
+            affected_data=filter_criteria
+        )
 
+        self._apply_filters(filter_criteria)
+
+    def _apply_filters(self, filter_criteria):
         for row in range(self.logs_table.rowCount()):
             show_row = True
-            operation_type = self.logs_table.item(row, 3).text() if self.logs_table.item(row, 3) else ""
 
-            if filter_type == "By Date":
+            if "date" in filter_criteria:
                 try:
-                    log_date = datetime.strptime(self.logs_table.item(row, 0).text().split()[0], "%Y-%m-%d").date()
-                    selected_date = self.date_picker.date().toPython()
-                    show_row = log_date == selected_date
+                    log_date = datetime.strptime(
+                        self.logs_table.item(row, 0).text().split()[0],
+                        "%Y-%m-%d"
+                    ).date()
+                    show_row = log_date == filter_criteria["date"]
                 except (ValueError, AttributeError) as e:
-                    print(f"Date parsing error: {e}")
                     show_row = False
-            elif filter_type == "By User ID":
-                user_id = self.logs_table.item(row, 1).text() if self.logs_table.item(row, 1) else ""
-                show_row = user_id == self.user_id_input.currentText()
-            elif filter_type.endswith("Operations"):
-                operation = filter_type.split()[0].lower()
-                show_row = operation_type.lower().startswith(operation)
+
+            elif "user_id" in filter_criteria:
+                user_id = self.logs_table.item(row, 1).text()
+                show_row = user_id == filter_criteria["user_id"]
+
+            elif "operation" in filter_criteria:
+                operation_type = self.logs_table.item(row, 3).text().lower()
+                show_row = operation_type.startswith(filter_criteria["operation"])
 
             self.logs_table.setRowHidden(row, not show_row)
 
+    def clear_logs(self):
+        """Clear all system logs with proper connection and transaction management"""
+        conn = None
+        try:
+            conn = sqlite3.connect(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                '..', 'data', 'academic_management.db'))
+            cursor = conn.cursor()
+
+            # Set a timeout for acquiring locks (5 seconds)
+            cursor.execute("PRAGMA busy_timeout = 5000")
+
+            # Begin transaction
+            cursor.execute("BEGIN TRANSACTION")
+
+            try:
+                # Delete all existing logs
+                cursor.execute("DELETE FROM operation_logs")
+
+                # Log the clear operation immediately within the same transaction
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                cursor.execute("""
+                    INSERT INTO operation_logs (timestamp, user_id, operation_type, details)
+                    VALUES (?, ?, ?, ?)
+                """, (timestamp, self.user_id, OperationType.CLEAR.value, "Administrator cleared all system logs"))
+
+                # Commit the transaction
+                conn.commit()
+
+                # Reload the table
+                self.load_logs()
+                self.load_user_ids()
+
+                QMessageBox.information(self, "Success", "All logs have been cleared.")
+
+            except sqlite3.Error as e:
+                if conn:
+                    conn.rollback()
+                raise e  # Re-raise to be caught by outer try block
+
+        except sqlite3.Error as e:
+            error_msg = f"Failed to clear logs: {str(e)}"
+            print(f"Database error: {error_msg}")
+            QMessageBox.critical(self, "Error", error_msg)
+
+            # Log the error without trying to access the database again
+            print(f"Error while clearing logs: {error_msg}")
+
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except sqlite3.Error as e:
+                    print(f"Error closing database connection: {e}")
+
     def confirm_clear_logs(self):
+        """Confirm and handle log clearing with improved error handling"""
         reply = QMessageBox.question(
             self,
             "Confirm Clear Logs",
@@ -250,49 +295,23 @@ class AdminDashboard(QMainWindow):
         )
 
         if reply == QMessageBox.Yes:
-            self.clear_logs()
-
-    def clear_logs(self):
-        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'academic_management.db')
-        try:
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-
-            # Get the current timestamp
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            # Begin transaction
-            cursor.execute("BEGIN TRANSACTION")
-
-            # Delete all existing logs
-            cursor.execute("DELETE FROM operation_logs")
-
-            # Add the log entry about clearing the logs
-            cursor.execute("""
-                INSERT INTO operation_logs (timestamp, user_id, operation_type, details)
-                VALUES (?, ?, ?, ?)
-            """, (timestamp, self.user_id, "admin_clear", "Administrator cleared all system logs"))
-
-            # Commit the transaction
-            conn.commit()
-
-            # Reload the table to show only the clear logs entry
-            self.load_logs()
-            self.load_user_ids()
-
-            QMessageBox.information(self, "Success", "All logs have been cleared.")
-
-        except sqlite3.Error as e:
-            print(f"Database error: {e}")
-            if conn:
-                conn.rollback()
-            QMessageBox.critical(self, "Error", "Failed to clear logs from database.")
-        finally:
-            if conn:
-                conn.close()
+            try:
+                self.clear_logs()
+            except Exception as e:
+                print(f"Unexpected error during log clearing: {e}")
+                QMessageBox.critical(self, "Error",
+                                     "An unexpected error occurred while clearing logs. Please try again or contact system administrator.")
 
     def logout(self):
-        """Handle admin logout with logging"""
-        self.log_admin_activity("logout", "Admin logged out of the system")
+        """Handle admin logout"""
+        self.logger.log_session(OperationType.LOGOUT)
         self.logout_signal.emit()
         self.close()
+
+    def closeEvent(self, event):
+        """Override closeEvent to log when admin exits the system"""
+        self.logger.log_operation(
+            "exit",
+            "Administrator exited the system"
+        )
+        event.accept()

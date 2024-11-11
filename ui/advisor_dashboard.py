@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, Signal
 import sqlite3
 from datetime import datetime
 from ui.common.what_if_analysis import AdvisorWhatIfAnalysis
+from ui.common.system_logger import SystemLogger, UserRole, OperationType
 
 
 class AdvisorDashboard(QMainWindow):
@@ -17,14 +18,23 @@ class AdvisorDashboard(QMainWindow):
     def __init__(self, user_id):
         super().__init__()
         self.user_id = user_id
+
+        # Initialize the logger first
+        self.logger = SystemLogger(self.user_id, UserRole.ADVISOR)
+
+        # Then get advisor_id and departments
         self.advisor_id = self.get_advisor_id()
         self.departments = self.get_advisor_departments()
+
+        print(f"Initializing AdvisorDashboard with user_id: {self.user_id}, advisor_id: {self.advisor_id}")
 
         self.setWindowTitle("Advisor Dashboard")
         self.setGeometry(100, 100, 800, 600)
         self.setup_ui()
         self.load_advisor_data()
-        self.log_operation("login", "Advisor logged into dashboard")
+
+        # Log the login session
+        self.logger.log_session(OperationType.LOGIN)
 
     def get_advisor_id(self):
         """Get the advisor_id from the database based on user_id"""
@@ -38,8 +48,21 @@ class AdvisorDashboard(QMainWindow):
                 WHERE user_id = ?
             """, (self.user_id,))
             result = cursor.fetchone()
+
+            # Log the database access
+            if result:
+                self.logger.log_data_access(
+                    "advisors",
+                    "retrieved advisor ID",
+                    {"user_id": self.user_id, "advisor_id": result[0]}
+                )
             return result[0] if result else None
+
         except sqlite3.Error as e:
+            self.logger.log_operation(
+                OperationType.ERROR,
+                f"Failed to get advisor ID: {str(e)}"
+            )
             print(f"Database error: {e}")
             return None
         finally:
@@ -60,8 +83,24 @@ class AdvisorDashboard(QMainWindow):
                 FROM advisor_departments 
                 WHERE advisor_id = ?
             """, (self.advisor_id,))
-            return [dept[0] for dept in cursor.fetchall()]
+            departments = [dept[0] for dept in cursor.fetchall()]
+
+            # Log the data access
+            self.logger.log_data_access(
+                "advisor_departments",
+                "retrieved department list",
+                {
+                    "advisor_id": self.advisor_id,
+                    "departments": departments
+                }
+            )
+            return departments
+
         except sqlite3.Error as e:
+            self.logger.log_operation(
+                OperationType.ERROR,
+                f"Failed to get advisor departments: {str(e)}"
+            )
             print(f"Database error: {e}")
             return []
         finally:
@@ -139,31 +178,30 @@ class AdvisorDashboard(QMainWindow):
         layout = QVBoxLayout(tab)
 
         # Student selection
-        student_group = QGroupBox("Student Selection")
+        student_group = QGroupBox("Select Student")
         student_layout = QHBoxLayout()
         self.student_combo = QComboBox()
         self.student_combo.currentIndexChanged.connect(self.load_student_courses)
-        student_layout.addWidget(QLabel("Select Student:"))
         student_layout.addWidget(self.student_combo)
         student_group.setLayout(student_layout)
         layout.addWidget(student_group)
 
-        # Semester selection and course registration group
+        # Course registration group
         reg_group = QGroupBox("Course Registration")
         reg_layout = QVBoxLayout()
 
-        # Add semester selection at the top
-        semester_selection_layout = QHBoxLayout()
-        self.view_semester_combo = QComboBox()
+        # Single semester selection
+        semester_layout = QHBoxLayout()
+        self.semester_combo = QComboBox()
         _, future_semesters = self.get_current_and_future_semesters()
         for sem, year in future_semesters:
             semester_name = {'S': 'Spring', 'U': 'Summer', 'F': 'Fall'}[sem]
-            self.view_semester_combo.addItem(f"{semester_name} {year}", (sem, year))
-        self.view_semester_combo.currentIndexChanged.connect(self.load_student_courses)
-        semester_selection_layout.addWidget(QLabel("View Semester:"))
-        semester_selection_layout.addWidget(self.view_semester_combo)
-        semester_selection_layout.addStretch()
-        reg_layout.addLayout(semester_selection_layout)
+            self.semester_combo.addItem(f"{semester_name} {year}", (sem, year))
+        self.semester_combo.currentIndexChanged.connect(self.load_student_courses)
+        semester_layout.addWidget(QLabel("Semester:"))
+        semester_layout.addWidget(self.semester_combo)
+        semester_layout.addStretch()
+        reg_layout.addLayout(semester_layout)
 
         # Course selection for registration
         course_layout = QHBoxLayout()
@@ -171,16 +209,6 @@ class AdvisorDashboard(QMainWindow):
         course_layout.addWidget(QLabel("Select Course:"))
         course_layout.addWidget(self.course_combo)
         reg_layout.addLayout(course_layout)
-
-        # Registration semester selection
-        semester_layout = QHBoxLayout()
-        self.semester_combo = QComboBox()
-        for sem, year in future_semesters:
-            semester_name = {'S': 'Spring', 'U': 'Summer', 'F': 'Fall'}[sem]
-            self.semester_combo.addItem(f"{semester_name} {year}", (sem, year))
-        semester_layout.addWidget(QLabel("Register for Semester:"))
-        semester_layout.addWidget(self.semester_combo)
-        reg_layout.addLayout(semester_layout)
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -214,12 +242,12 @@ class AdvisorDashboard(QMainWindow):
         layout = QVBoxLayout(tab)
 
         # Student selection for progress
-        student_group = QGroupBox("Student Selection")
+        student_group = QGroupBox("Select Student")
         student_layout = QHBoxLayout()
 
         self.progress_student_combo = QComboBox()
         self.progress_student_combo.currentIndexChanged.connect(self.load_student_progress)
-        student_layout.addWidget(QLabel("Select Student:"))
+        #student_layout.addWidget(QLabel("Select Student:"))
         student_layout.addWidget(self.progress_student_combo)
 
         student_group.setLayout(student_layout)
@@ -265,6 +293,13 @@ class AdvisorDashboard(QMainWindow):
                                                 '..', 'data', 'academic_management.db'))
             cursor = conn.cursor()
 
+            # Log the start of data loading
+            self.logger.log_operation(
+                OperationType.VIEW,
+                "Loading advisor dashboard data",
+                {"advisor_id": self.advisor_id}
+            )
+
             # Load advisees
             cursor.execute("""
                 SELECT DISTINCT s.student_id, s.major, dm.department_id,
@@ -287,9 +322,25 @@ class AdvisorDashboard(QMainWindow):
 
             advisees = cursor.fetchall()
 
+            # Log advisee data access
+            self.logger.log_data_access(
+                "students",
+                "retrieved advisee list",
+                {
+                    "advisor_id": self.advisor_id,
+                    "advisee_count": len(advisees)
+                }
+            )
+
             # Populate student combos
             self.student_combo.clear()
             self.progress_student_combo.clear()
+
+            # Add default "Select Student" option to both combo boxes
+            self.student_combo.addItem("Select Student", None)
+            self.progress_student_combo.addItem("Select Student", None)
+
+            # Add student entries
             for advisee in advisees:
                 student_text = f"{advisee[0]} - {advisee[1]}"
                 self.student_combo.addItem(student_text, advisee[0])
@@ -306,14 +357,38 @@ class AdvisorDashboard(QMainWindow):
             """, (self.advisor_id,))
 
             courses = cursor.fetchall()
+
+            # Log course data access
+            self.logger.log_data_access(
+                "courses",
+                "retrieved available courses",
+                {
+                    "advisor_id": self.advisor_id,
+                    "course_count": len(courses)
+                }
+            )
+
             self.course_combo.clear()
             for course in courses:
                 course_text = f"{course[0]} {course[1]} ({course[2]} credits)"
                 self.course_combo.addItem(course_text, (course[0], course[1], course[2]))
 
         except sqlite3.Error as e:
-            print(f"Database error: {e}")
+            error_msg = f"Database error while loading advisor data: {str(e)}"
+            self.logger.log_operation(
+                OperationType.ERROR,
+                error_msg
+            )
+            print(error_msg)
             QMessageBox.critical(self, "Error", "Failed to load advisor data")
+        except Exception as e:
+            error_msg = f"Unexpected error while loading advisor data: {str(e)}"
+            self.logger.log_operation(
+                OperationType.ERROR,
+                error_msg
+            )
+            print(error_msg)
+            QMessageBox.critical(self, "Error", "An unexpected error occurred while loading data")
         finally:
             if conn:
                 conn.close()
@@ -322,6 +397,16 @@ class AdvisorDashboard(QMainWindow):
         """Filter the advisee table based on search text and department"""
         search_text = self.search_input.text().lower()
         selected_dept = self.department_filter.currentText()
+
+        # Log the filter operation
+        self.logger.log_operation(
+            OperationType.FILTER,
+            "Filtered advisee list",
+            {
+                "search_text": search_text,
+                "department": selected_dept
+            }
+        )
 
         for row in range(self.advisee_table.rowCount()):
             student_id = self.advisee_table.item(row, 0).text().lower()
@@ -333,17 +418,28 @@ class AdvisorDashboard(QMainWindow):
 
             self.advisee_table.setRowHidden(row, not (matches_search and matches_dept))
 
-
     def load_student_progress(self):
         """Load progress information for the selected student"""
         student_id = self.progress_student_combo.currentData()
         if not student_id:
+            self.progress_label.setText("")
+            self.history_table.setRowCount(0)
             return
 
         try:
             conn = sqlite3.connect(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                               '..', 'data', 'academic_management.db'))
+                                                '..', 'data', 'academic_management.db'))
             cursor = conn.cursor()
+
+            # Log the student progress data access
+            self.logger.log_data_access(
+                "student_progress",
+                "viewed student progress",
+                {
+                    "advisor_id": self.advisor_id,
+                    "student_id": student_id
+                }
+            )
 
             # Get student progress information
             cursor.execute("""
@@ -381,38 +477,75 @@ class AdvisorDashboard(QMainWindow):
                 )
                 self.progress_label.setText(progress_text)
 
-            # Load course history with GPA impact
+                # Log the progress metrics
+                self.logger.log_data_access(
+                    "student_metrics",
+                    "calculated student progress metrics",
+                    {
+                        "student_id": student_id,
+                        "major": major,
+                        "credits_earned": credits_earned,
+                        "progress_percentage": f"{(credits_earned / hours_req * 100):.1f}%"
+                    }
+                )
+
+            # Load course history
             cursor.execute("""
-                SELECT c.course_prefix || ' ' || c.course_number,
-                       c.credits, sc.grade, sc.semester, sc.year_taken,
-                       CASE sc.grade
-                           WHEN 'A' THEN c.credits * 4.0
-                           WHEN 'B' THEN c.credits * 3.0
-                           WHEN 'C' THEN c.credits * 2.0
-                           WHEN 'D' THEN c.credits * 1.0
-                           WHEN 'F' THEN 0.0
-                           ELSE NULL
-                       END as points
+                SELECT 
+                    c.course_prefix || ' ' || c.course_number as course,
+                    c.credits,
+                    sc.grade,
+                    sc.semester,
+                    sc.year_taken,
+                    CASE 
+                        WHEN sc.grade = 'A' THEN '4.0'
+                        WHEN sc.grade = 'B' THEN '3.0'
+                        WHEN sc.grade = 'C' THEN '2.0'
+                        WHEN sc.grade = 'D' THEN '1.0'
+                        WHEN sc.grade = 'F' THEN '0.0'
+                        ELSE 'N/A'
+                    END as gpa_impact
                 FROM student_courses sc
                 JOIN courses c ON sc.course_prefix = c.course_prefix 
                     AND sc.course_number = c.course_number
                 WHERE sc.student_id = ?
-                ORDER BY sc.year_taken DESC, sc.semester DESC
+                ORDER BY sc.year_taken DESC, 
+                    CASE sc.semester 
+                        WHEN 'F' THEN 1
+                        WHEN 'S' THEN 2
+                        WHEN 'U' THEN 3
+                    END DESC,
+                    course
             """, (student_id,))
 
             courses = cursor.fetchall()
-            self.history_table.setRowCount(len(courses))
 
+            # Populate the history table
+            self.history_table.setRowCount(len(courses))
             for row, course in enumerate(courses):
                 for col, value in enumerate(course):
-                    if col == 5:  # GPA Impact column
-                        value = f"{value:.1f} points" if value is not None else 'N/A'
                     item = QTableWidgetItem(str(value if value is not None else 'N/A'))
                     item.setTextAlignment(Qt.AlignCenter)
+
                     self.history_table.setItem(row, col, item)
 
+            # Log the data access
+            self.logger.log_data_access(
+                "course_history",
+                "viewed student course history",
+                {
+                    "student_id": student_id,
+                    "courses_found": len(courses)
+                }
+            )
+
         except sqlite3.Error as e:
-            print(f"Database error: {e}")
+            error_msg = f"Failed to load student progress: {str(e)}"
+            self.logger.log_operation(
+                OperationType.ERROR,
+                error_msg
+            )
+            print(error_msg)
             QMessageBox.critical(self, "Error", "Failed to load student progress")
         finally:
             if conn:
@@ -422,6 +555,7 @@ class AdvisorDashboard(QMainWindow):
         """Load courses for the selected student and semester"""
         student_id = self.student_combo.currentData()
         if not student_id:
+            self.courses_table.setRowCount(0)
             return
 
         # Get selected semester and year
@@ -439,6 +573,18 @@ class AdvisorDashboard(QMainWindow):
             cursor = conn.cursor()
 
             current_sem, _ = self.get_current_and_future_semesters()
+
+            # Log the course data access
+            self.logger.log_data_access(
+                "student_courses",
+                "viewed student course schedule",
+                {
+                    "student_id": student_id,
+                    "semester": selected_semester,
+                    "year": selected_year,
+                    "advisor_id": self.advisor_id
+                }
+            )
 
             # Modified query to filter by selected semester and year
             cursor.execute("""
@@ -464,6 +610,18 @@ class AdvisorDashboard(QMainWindow):
                   selected_semester, selected_year))
 
             courses = cursor.fetchall()
+
+            # Log the results
+            self.logger.log_data_access(
+                "course_schedule",
+                "retrieved course schedule details",
+                {
+                    "student_id": student_id,
+                    "courses_found": len(courses),
+                    "semester": f"{selected_semester} {selected_year}"
+                }
+            )
+
             self.courses_table.setRowCount(len(courses))
 
             for row, course in enumerate(courses):
@@ -482,12 +640,16 @@ class AdvisorDashboard(QMainWindow):
                             item.setBackground(Qt.yellow)
 
         except sqlite3.Error as e:
-            print(f"Database error: {e}")
+            error_msg = f"Failed to load student courses: {str(e)}"
+            self.logger.log_operation(
+                OperationType.ERROR,
+                error_msg
+            )
+            print(error_msg)
             QMessageBox.critical(self, "Error", "Failed to load student courses")
         finally:
             if conn:
                 conn.close()
-
 
     def drop_course(self):
         """Drop a student from a selected course with enhanced validation"""
@@ -511,36 +673,70 @@ class AdvisorDashboard(QMainWindow):
             course_parts = course_full.split()
 
             if len(course_parts) != 2:
-                QMessageBox.warning(self, "Error", "Invalid course format")
+                error_msg = "Invalid course format"
+                self.logger.log_operation(
+                    OperationType.ERROR,
+                    error_msg,
+                    {"course_text": course_full}
+                )
+                QMessageBox.warning(self, "Error", error_msg)
                 return
 
             course_prefix, course_number = course_parts
             semester = self.courses_table.item(row, 3).text()
             year = self.courses_table.item(row, 4).text()
 
+            # Log drop attempt
+            self.logger.log_operation(
+                OperationType.DROP,
+                "Attempting to drop course",
+                {
+                    "advisor_id": self.advisor_id,
+                    "student_id": student_id,
+                    "course": f"{course_prefix} {course_number}",
+                    "semester": f"{semester} {year}"
+                }
+            )
+
         except (IndexError, AttributeError) as e:
-            QMessageBox.critical(self, "Error", "Failed to get course details")
-            print(f"Error getting course details: {e}")
+            error_msg = f"Failed to get course details: {str(e)}"
+            self.logger.log_operation(
+                OperationType.ERROR,
+                error_msg
+            )
+            QMessageBox.critical(self, "Error", error_msg)
             return
 
         # Validate course status
         if status == 'Completed':
-            QMessageBox.warning(
-                self,
-                "Drop Error",
-                "Cannot drop completed courses. Only current or future courses can be dropped."
+            error_msg = "Cannot drop completed courses. Only current or future courses can be dropped."
+            self.logger.log_operation(
+                OperationType.ERROR,
+                error_msg,
+                {
+                    "reason": "completed_course",
+                    "course": f"{course_prefix} {course_number}",
+                    "student_id": student_id
+                }
             )
+            QMessageBox.warning(self, "Drop Error", error_msg)
             return
 
         # Get current semester for additional validation
         current_sem, _ = self.get_current_and_future_semesters()
         if (int(year) < current_sem[1] or
                 (int(year) == current_sem[1] and semester < current_sem[0])):
-            QMessageBox.warning(
-                self,
-                "Drop Error",
-                "Cannot drop courses from past semesters."
+            error_msg = "Cannot drop courses from past semesters."
+            self.logger.log_operation(
+                OperationType.ERROR,
+                error_msg,
+                {
+                    "reason": "past_semester",
+                    "course": f"{course_prefix} {course_number}",
+                    "semester": f"{semester} {year}"
+                }
             )
+            QMessageBox.warning(self, "Drop Error", error_msg)
             return
 
         # Confirm with user
@@ -554,6 +750,14 @@ class AdvisorDashboard(QMainWindow):
         )
 
         if reply == QMessageBox.No:
+            self.logger.log_operation(
+                OperationType.DROP,
+                "Course drop cancelled by user",
+                {
+                    "course": f"{course_prefix} {course_number}",
+                    "student_id": student_id
+                }
+            )
             return
 
         # Perform database operation
@@ -581,11 +785,17 @@ class AdvisorDashboard(QMainWindow):
 
             if cursor.fetchone()[0] == 0:
                 cursor.execute("ROLLBACK")
-                QMessageBox.warning(
-                    self,
-                    "Drop Error",
-                    "Course not found or cannot be dropped."
+                error_msg = "Course not found or cannot be dropped."
+                self.logger.log_operation(
+                    OperationType.ERROR,
+                    error_msg,
+                    {
+                        "reason": "course_not_found",
+                        "course": f"{course_prefix} {course_number}",
+                        "student_id": student_id
+                    }
                 )
+                QMessageBox.warning(self, "Drop Error", error_msg)
                 return
 
             # Perform the drop
@@ -601,11 +811,16 @@ class AdvisorDashboard(QMainWindow):
             # Commit transaction
             conn.commit()
 
-            # Log the operation
-            self.log_operation(
-                "drop",
-                f"Dropped course {course_prefix} {course_number} "
-                f"for student {student_id} ({semester} {year})"
+            # Log successful drop
+            self.logger.log_operation(
+                OperationType.DROP,
+                "Successfully dropped course",
+                {
+                    "advisor_id": self.advisor_id,
+                    "student_id": student_id,
+                    "course": f"{course_prefix} {course_number}",
+                    "semester": f"{semester} {year}"
+                }
             )
 
             # Refresh the display
@@ -620,20 +835,15 @@ class AdvisorDashboard(QMainWindow):
         except sqlite3.Error as e:
             if conn:
                 conn.rollback()
-            print(f"Database error: {e}")
+            error_msg = f"Database error while dropping course: {str(e)}"
+            self.logger.log_operation(
+                OperationType.ERROR,
+                error_msg
+            )
             QMessageBox.critical(
                 self,
                 "Error",
                 "Failed to drop course. Please try again or contact system administrator."
-            )
-        except Exception as e:
-            if conn:
-                conn.rollback()
-            print(f"Unexpected error: {e}")
-            QMessageBox.critical(
-                self,
-                "Error",
-                "An unexpected error occurred. Please try again or contact system administrator."
             )
         finally:
             if conn:
@@ -676,6 +886,18 @@ class AdvisorDashboard(QMainWindow):
             # Begin transaction
             cursor.execute("BEGIN TRANSACTION")
 
+            # Log the registration attempt
+            self.logger.log_operation(
+                OperationType.REGISTER,
+                "Attempting course registration",
+                {
+                    "advisor_id": self.advisor_id,
+                    "student_id": student_id,
+                    "course": f"{course_prefix} {course_number}",
+                    "semester": f"{semester} {year}"
+                }
+            )
+
             # Check if student is already registered for this course in the same semester
             cursor.execute("""
                 SELECT COUNT(*) FROM student_courses 
@@ -688,11 +910,17 @@ class AdvisorDashboard(QMainWindow):
 
             if cursor.fetchone()[0] > 0:
                 cursor.execute("ROLLBACK")
-                QMessageBox.warning(
-                    self,
-                    "Registration Error",
-                    "Student is already registered for this course in the selected semester."
+                error_msg = "Student is already registered for this course in the selected semester."
+                self.logger.log_operation(
+                    OperationType.ERROR,
+                    error_msg,
+                    {
+                        "type": "duplicate_registration",
+                        "student_id": student_id,
+                        "course": f"{course_prefix} {course_number}"
+                    }
                 )
+                QMessageBox.warning(self, "Registration Error", error_msg)
                 return
 
             # Register the student for the course
@@ -705,11 +933,16 @@ class AdvisorDashboard(QMainWindow):
             # Commit transaction
             conn.commit()
 
-            # Log the operation
-            self.log_operation(
-                "register",
-                f"Registered student {student_id} for course {course_prefix} {course_number} "
-                f"({semester} {year})"
+            # Log successful registration
+            self.logger.log_operation(
+                OperationType.REGISTER,
+                "Course registration successful",
+                {
+                    "student_id": student_id,
+                    "course": f"{course_prefix} {course_number}",
+                    "semester": f"{semester} {year}",
+                    "advisor_id": self.advisor_id
+                }
             )
 
             # Refresh the display
@@ -724,21 +957,19 @@ class AdvisorDashboard(QMainWindow):
         except sqlite3.Error as e:
             if conn:
                 conn.rollback()
-            print(f"Database error: {e}")
-            QMessageBox.critical(
-                self,
-                "Error",
-                "Failed to register for course. Please try again or contact system administrator."
+            error_msg = f"Failed to register for course: {str(e)}"
+            self.logger.log_operation(
+                OperationType.ERROR,
+                error_msg,
+                {
+                    "type": "database_error",
+                    "student_id": student_id,
+                    "course": f"{course_prefix} {course_number}"
+                }
             )
-        except Exception as e:
-            if conn:
-                conn.rollback()
-            print(f"Unexpected error: {e}")
-            QMessageBox.critical(
-                self,
-                "Error",
-                "An unexpected error occurred. Please try again or contact system administrator."
-            )
+            print(error_msg)
+            QMessageBox.critical(self, "Error",
+                                 "Failed to register for course. Please try again or contact system administrator.")
         finally:
             if conn:
                 try:
@@ -771,11 +1002,15 @@ class AdvisorDashboard(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close event"""
-        self.log_operation("exit", "Advisor exited the system")
+        self.logger.log_operation(
+            "exit",
+            "Advisor exited the system",
+            include_role_prefix=False
+        )
         event.accept()
 
     def logout(self):
         """Handle logout"""
-        self.log_operation("logout", "Advisor logged out")
+        self.logger.log_session(OperationType.LOGOUT)
         self.logout_signal.emit()
         self.close()

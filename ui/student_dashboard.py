@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, Signal
 import sqlite3
 from datetime import datetime
 from ui.common.what_if_analysis import StudentWhatIfAnalysis
+from ui.common.system_logger import SystemLogger, UserRole, OperationType
 
 
 class StudentDashboard(QMainWindow):
@@ -14,12 +15,18 @@ class StudentDashboard(QMainWindow):
     def __init__(self, student_id):
         super().__init__()
         self.student_id = student_id
-        self.user_id = self.get_user_id()  # Get the user_id when initializing
+        self.user_id = self.get_user_id()
         print(f"Initializing StudentDashboard with student_id: {self.student_id}, user_id: {self.user_id}")
+
+        # Initialize the logger
+        self.logger = SystemLogger(self.user_id, UserRole.STUDENT)
+
         self.setWindowTitle("Student Dashboard")
         self.setGeometry(100, 100, 800, 600)
         self.setup_ui()
-        self.log_operation("login", "Student logged into dashboard")
+
+        # Log the login
+        self.logger.log_session(OperationType.LOGIN)
 
 
     def setup_ui(self):
@@ -171,15 +178,18 @@ class StudentDashboard(QMainWindow):
         else:
             return 'Fall', current_date.year
 
-
     def load_transcript_data(self):
-        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'academic_management.db')
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                '..', 'data', 'academic_management.db'))
             cursor = conn.cursor()
 
-            # Log the transcript view
-            self.log_operation("view", "Viewed transcript data")
+            # Log transcript view with the new logger
+            self.logger.log_data_access(
+                "transcript",
+                "view",
+                {"student_id": self.student_id}
+            )
 
             cursor.execute("""
                 SELECT DISTINCT semester, year_taken
@@ -288,19 +298,28 @@ class StudentDashboard(QMainWindow):
             self.transcript_table.resizeColumnsToContents()
 
         except sqlite3.Error as e:
+            self.logger.log_operation(
+                OperationType.ERROR,
+                f"Failed to load transcript data: {str(e)}"
+            )
             print(f"Database error: {e}")
+
         finally:
             if conn:
                 conn.close()
 
     def load_student_data(self):
-        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'academic_management.db')
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                              '..', 'data', 'academic_management.db'))
             cursor = conn.cursor()
 
-            # Log the data view
-            self.log_operation("view", "Viewed student data and current courses")
+            # Log the data access
+            self.logger.log_data_access(
+                "student_info",
+                "view personal and course information",
+                {"student_id": self.student_id}
+            )
 
             cursor.execute("""
                 SELECT student_id, gender, major
@@ -370,19 +389,69 @@ class StudentDashboard(QMainWindow):
 
             self.load_transcript_data()
 
+
         except sqlite3.Error as e:
+            self.logger.log_operation(
+                OperationType.ERROR,
+                f"Failed to load student data: {str(e)}"
+            )
             print(f"Database error: {e}")
         finally:
             if conn:
                 conn.close()
 
+    def calculate_gpa(self, courses):
+        """Calculate GPA from course data"""
+        try:
+            total_points = 0
+            total_credits = 0
+            grade_points = {'A': 4, 'B': 3, 'C': 2, 'D': 1, 'F': 0}
+
+            for credits, grade in courses:
+                if grade in grade_points:
+                    total_points += grade_points[grade] * credits
+                    total_credits += credits
+
+            gpa = total_points / total_credits if total_credits > 0 else 0
+
+            # Log GPA calculation
+            self.logger.log_operation(
+                OperationType.ANALYSIS,
+                "Calculated GPA",
+                {"gpa": f"{gpa:.2f}", "total_credits": total_credits}
+            )
+
+            return gpa
+        except Exception as e:
+            self.logger.log_operation(
+                OperationType.ERROR,
+                f"Error calculating GPA: {str(e)}"
+            )
+            return 0.0
+
+    def get_current_semester(self):
+        current_date = datetime.now()
+        month = current_date.month
+        day = current_date.day
+
+        if 1 <= month <= 5 and day <= 15:
+            return 'Spring', current_date.year
+        elif (month == 5 and day > 15) or (month <= 8 and (month != 8 or day <= 15)):
+            return 'Summer', current_date.year
+        else:
+            return 'Fall', current_date.year
+
     def logout(self):
-        """Handle student logout with logging"""
-        self.log_operation("logout", "Student logged out of the system")
+        """Handle student logout"""
+        self.logger.log_session(OperationType.LOGOUT)
         self.logout_signal.emit()
         self.close()
 
     def closeEvent(self, event):
         """Override closeEvent to log when student exits the system"""
-        self.log_operation("exit", "Student exited the system")
+        self.logger.log_operation(
+            "exit",
+            "Student exited the system",
+            include_role_prefix=False
+        )
         event.accept()
